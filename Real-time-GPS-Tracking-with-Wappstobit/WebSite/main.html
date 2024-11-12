@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-time GPS Tracking with Google Maps</title>
+  <script src="apikey.js" defer></script>
+  <style>
+    #map {
+      height: 100vh;
+      width: 100%;
+    }
+  </style>
+  <script defer>
+    function loadGoogleMapsAPI() {
+      const script = document.createElement("script");
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&libraries=geometry,places&callback=initMap`;
+      document.head.appendChild(script);
+    }
+    window.onload = loadGoogleMapsAPI;
+  </script>
+</head>
+
+<body>
+  <div id="map"></div>
+</body>
+
+</html>
+
+<body>
+  <div id="map"></div>
+  <script>
+    let map;
+    let pathCoordinates = [];
+    let polyline;
+    let lastPosition = null;
+    let directionsService;
+    let marker = null;
+    let thresholdDistance = 10; // 10 meters threshold distance
+
+    function initMap() {
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: { lat: 0, lng: 0 },
+        zoom: 19,
+      });
+
+      polyline = new google.maps.Polyline({
+        path: pathCoordinates,
+        geodesic: true,
+        strokeColor: '#FF0000',
+        strokeOpacity: 1.0,
+        strokeWeight: 2,
+      });
+      polyline.setMap(map);
+
+      directionsService = new google.maps.DirectionsService();
+
+      // WebSocket for real-time updates
+      var sessionId;
+      var cookieArr = document.cookie.split(';');
+      for (var i = 0; i < cookieArr.length; i++) {
+        var cookiePair = cookieArr[i].split('=');
+        if ("sessionId" === cookiePair[0].trim()) {
+          sessionId = decodeURIComponent(cookiePair[1]);
+        }
+      }
+      if (!sessionId) {
+        throw new Error("session id not found");
+      }
+      const deviceId = 'bed80646-1126-4c40-8f0f-32e658016c65';
+      const urlWebsocket = "wss://wappsto.com/services/2.1/websocket/open?x-session=" + sessionId +
+        "&full=true&subscription=[/network/" + deviceId + "]";
+      const ws = new WebSocket(urlWebsocket);
+
+      ws.onmessage = function (event) {
+        const DataJson = JSON.parse(event.data);
+
+        if (DataJson.data && DataJson.data.meta && DataJson.data.meta.geo) {
+          const latitude = parseFloat(DataJson.data.meta.geo.latitude);
+          const longitude = parseFloat(DataJson.data.meta.geo.longitude);
+
+          updateMap(latitude, longitude);
+        }
+      };
+    }
+
+    // Function to calculate distance between two LatLng points
+    function calculateDistance(latlng1, latlng2) {
+      return google.maps.geometry.spherical.computeDistanceBetween(latlng1, latlng2);
+    }
+
+    // Function to update map with new coordinates
+    function updateMap(latitude, longitude) {
+      const newPosition = new google.maps.LatLng(latitude, longitude);
+      if (!lastPosition) {
+        // First location received
+        lastPosition = newPosition;
+        pathCoordinates.push(newPosition);
+        map.panTo(newPosition);
+        marker = new google.maps.Marker({
+          position: newPosition,
+          map: map,
+          title: "Current Location",
+        });
+      } else {
+        // Calculate distance between current and last positions
+        const distance = calculateDistance(newPosition, lastPosition);
+        // Convert threshold distance from meters to degrees
+        const thresholdDistanceDegrees = thresholdDistance / 111111; // Approximate conversion factor
+
+        if (distance > thresholdDistanceDegrees) {
+          directionsService.route({
+            origin: lastPosition,
+            destination: newPosition,
+            travelMode: google.maps.TravelMode.DRIVING,
+          }, (response, status) => {
+            if (status === google.maps.DirectionsStatus.OK) {
+              const route = response.routes[0].overview_path;
+              pathCoordinates = pathCoordinates.concat(route);
+              polyline.setPath(pathCoordinates);
+
+              lastPosition = newPosition;
+              map.panTo(newPosition);
+              // Update marker position
+              marker.setPosition(newPosition);
+            } else {
+              console.error('Directions request failed due to ' + status);
+            }
+          });
+        }
+      }
+    }
+  </script>
+</body>
+
+</html>
